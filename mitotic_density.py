@@ -11,7 +11,8 @@ License: MIT
 import argparse
 import csv
 import json
-import math
+import os
+import re
 import sys
 from typing import Dict, Any, List, Optional
 
@@ -65,8 +66,33 @@ def process_single(args) -> None:
     print(json.dumps(res, indent=2))
 
 
+def _validate_safe_path(path: str, must_exist: bool = False) -> str:
+    """Validate a file path for safe access, preventing path traversal."""
+    if not path or "\x00" in path:
+        raise ValueError("Invalid file path: empty or contains null bytes")
+
+    normalized = os.path.normpath(os.path.abspath(path))
+
+    # Reject paths that attempt traversal to sensitive system directories
+    dangerous_prefixes = [
+        "/etc", "/sys", "/proc", "/dev",
+        "C:\\Windows", "C:\\Program Files", "C:\\ProgramData",
+    ]
+    for prefix in dangerous_prefixes:
+        if normalized.lower().startswith(prefix.lower()):
+            raise ValueError(f"Access denied: path '{path}' resolves to a restricted system location")
+
+    if must_exist and not os.path.isfile(normalized):
+        raise FileNotFoundError(f"Input file not found: {path}")
+
+    return normalized
+
+
 def process_batch(input_csv: str, output_csv: str) -> None:
-    with open(input_csv, mode="r", encoding="utf-8-sig") as f:
+    safe_input = _validate_safe_path(input_csv, must_exist=True)
+    safe_output = _validate_safe_path(output_csv, must_exist=False)
+
+    with open(safe_input, mode="r", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         fieldnames = list(reader.fieldnames or [])
         rows = list(reader)
@@ -82,12 +108,17 @@ def process_batch(input_csv: str, output_csv: str) -> None:
         row_dict["clinical_recommendation"] = calc_res["clinical_recommendation"]
         out_rows.append(row_dict)
 
-    with open(output_csv, mode="w", encoding="utf-8", newline="") as f:
+    # Ensure output directory exists
+    out_dir = os.path.dirname(safe_output)
+    if out_dir and not os.path.isdir(out_dir):
+        os.makedirs(out_dir, exist_ok=True)
+
+    with open(safe_output, mode="w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=out_fields)
         writer.writeheader()
         writer.writerows(out_rows)
 
-    print(f"Processed {len(out_rows)} records -> {output_csv}")
+    print(f"Processed {len(out_rows)} records -> {safe_output}")
 
 
 def main(argv=None):

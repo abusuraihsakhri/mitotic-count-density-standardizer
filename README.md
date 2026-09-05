@@ -1,7 +1,7 @@
 # Mitotic Count Density Standardizer
 
-> **Domain:** Clinical Decision Support & Biomedical Computing  
-> **Reference Guidelines & Standards:** `Standard Clinical Formulations & ISO/IEC Quality Frameworks`
+> **Domain:** Clinical Decision Support & Biomedical Computing
+> **Reference Guidelines & Standards:** CAP / CLSI / ISO Standards
 
 <div align="center">
 
@@ -18,12 +18,10 @@
 
 ## 📖 What It Does
 
-Mitotic Count Density Standardizer
-Standardizes raw mitotic counts per 10 High Power Fields (HPF) to mm2 per microscope field diameter.
+The Mitotic Count Density Standardizer standardizes raw mitotic counts per 10 High Power Fields (HPF) to mm² per microscope field diameter. It provides both single-case evaluation and batch CSV processing.
 
-Zero-dependency Python implementation with single and batch evaluation.
-Author: Dr. Abu Suraih Sakhri
-License: MIT
+- **Author:** Dr. Abu Suraih Sakhri
+- **License:** MIT
 
 ---
 
@@ -31,73 +29,117 @@ License: MIT
 
 ### 🔬 Analytical Functions
 
-- **`calculate_metrics()`**: Core domain algorithm for mitotic-count-density-standardizer.
-- **`process_single()`** — calculates and validates process_single parameters.
-- **`process_batch()`** — calculates and validates process_batch parameters.
-- **`main()`** — calculates and validates main parameters.
+- **`calculate_metrics()`**: Core domain algorithm that computes weighted scores and classifies results into clinical tiers (Low/Standard, Moderate/Intermediate, High/Severe).
+- **`process_single()`** — Evaluates a single case via CLI arguments.
+- **`process_batch()`** — Processes CSV input files with path-traversal protection.
+- **`main()`** — CLI entry point with subcommands.
 
 ---
 
-## 📐 Mathematical Formulation & Logic
+## 📐 Mathematical Formulation
 
 ```text
-  score = primary_val
-  rounded_score = round(score, 2)
-  res = calculate_metrics(**kwargs)
-  calc_res = calculate_metrics(**r)
+score = primary_val + sum(v_i * (1/i) for i, v_i in enumerate(secondary_vals, start=2))
+rounded_score = round(score, 2)
+```
+
+**Classification Tiers:**
+- **< 10.0** → Low / Standard (Standard monitoring)
+- **10.0 – 25.0** → Moderate / Intermediate (Close observation)
+- **≥ 25.0** → High / Severe (Urgent clinical intervention)
+
+---
+
+## 💻 Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/abusuraihsakhri/mitotic-count-density-standardizer.git
+cd mitotic-count-density-standardizer
+
+# Create virtual environment (recommended)
+python -m venv venv
+source venv/bin/activate  # or venv\Scripts\activate on Windows
+
+# Install dependencies
+pip install -e ".[test]"
 ```
 
 ---
 
 ## 💻 CLI Quickstart & Usage
 
-### 1. Guided Interactive Mode
+### 1. Single Case Evaluation
 ```bash
-python cli.py
+python mitotic_density.py single --v1 14.5 --v2 4.2 --v3 1.8
 ```
 
-### 2. Direct Parameterized Evaluation
+### 2. Batch CSV Processing
 ```bash
-python cli.py --task-id <value> --target <value> --primary <value> --secondary <value>
+python mitotic_density.py batch -i sample.csv -o results.csv
+```
+
+### 3. Enterprise CLI (Agents System)
+```bash
+# Run audit evaluation
+python cli.py audit --primary 28.5 --secondary 14.2
+
+# Batch process records
+python cli.py batch -i sample.csv -o results.csv
+
+# Verify HMAC audit trail
+python cli.py verify-audit
+
+# Launch FastAPI REST server
+python cli.py serve --host 127.0.0.1 --port 8000
 ```
 
 ### Parameter Reference
-- `--task-id`: Specifies input measurement or parameter value.
-- `--target`: Specifies input measurement or parameter value.
-- `--primary`: Specifies input measurement or parameter value.
-- `--secondary`: Specifies input measurement or parameter value.
-- `--critical`: Specifies input measurement or parameter value.
-- `--status`: Specifies input measurement or parameter value.
-- `--input`: Specifies input measurement or parameter value.
-- `--output`: Specifies input measurement or parameter value.
+- `--v1`: Primary measurement (default: 10.0)
+- `--v2`: Secondary measurement (default: 5.0)
+- `--v3`: Tertiary measurement (default: 2.0)
+- `-i / --input`: Input CSV file path
+- `-o / --output`: Output CSV file path (default: results.csv)
 
 ### Input Data Schema
 
 | Field | Description | Requirement |
 |:------|:------------|:------------|
-| `Patient_ID` | Parameter / observation metric | Required |
-| `v1` | Parameter / observation metric | Required |
-| `v2` | Parameter / observation metric | Required |
-| `v3` | Parameter / observation metric | Required |
+| `Patient_ID` | Patient identifier | Required |
+| `v1` | Primary measurement | Required |
+| `v2` | Secondary measurement | Required |
+| `v3` | Tertiary measurement | Required |
 
 ---
 
 ## 🛡️ Security & Enterprise Architecture
 
-* **Zero-PHI Outbound Interceptor:** Active AST and regex inspection blocking SSNs, MRNs, phone numbers, and patient identifiers.
-* **Tamper-Evident HMAC-SHA256 Audit Trail:** Chained, cryptographically signed logs for every evaluation and state transition.
-* **Air-Gapped LLM Reasoning Adapter:** Agnostic integration for local Ollama instances (`llama3`, `mistral`), Claude 3.5 Sonnet, GPT-4o, and deterministic test mocks.
-* **Active Learning Bayesian Calibration:** Dynamic tracker updating worker reliability weights and monitoring Brier calibration drift.
-* **FastAPI & Prometheus Telemetry:** Exposes OpenAPI 3.1 REST endpoints and operational Prometheus metrics (`/metrics`).
+* **Zero-PHI Outbound Interceptor:** Active regex inspection blocking SSNs, MRNs, phone numbers, emails, and patient identifiers from audit logs and outbound data.
+* **Tamper-Evident HMAC-SHA256 Audit Trail:** Chained, cryptographically signed logs for every evaluation and state transition with integrity verification.
+* **Path Traversal Protection:** File path validation preventing access to system directories.
+* **Secure Key Management:** Audit signing key loaded from `AUDIT_SECRET_KEY` environment variable with secure random fallback.
+
+### Environment Variables
+
+| Variable | Description | Default |
+|:---------|:------------|:--------|
+| `AUDIT_SECRET_KEY` | HMAC-SHA256 audit signing key | Random (ephemeral) |
+| `MODEL_PROVIDER` | LLM provider for chat (mock/ollama/claude/openai) | mock |
 
 ---
 
 ## 🧪 Testing & Verification
 
-Run the automated test suite:
+Run the full test suite:
 
 ```bash
 pytest -v
+```
+
+Run with coverage:
+
+```bash
+pytest -v --cov=mitotic_density --cov=agents
 ```
 
 Execute high-throughput batch simulation benchmarks:
@@ -110,7 +152,46 @@ python simulator.py --tasks 1000 --concurrency 8
 
 ## 🐳 Container Deployment
 
+### Docker
 ```bash
+# Set production audit key
+export AUDIT_SECRET_KEY=$(python -c "import secrets; print(secrets.token_hex(32))")
+
+# Build and run
 docker build -t mitotic-count-density-standardizer .
-docker run -p 8000:8000 mitotic-count-density-standardizer
+docker run -p 8000:8000 -e AUDIT_SECRET_KEY mitotic-count-density-standardizer
+```
+
+### Docker Compose
+```bash
+# Generate a secure key
+export AUDIT_SECRET_KEY=$(python -c "import secrets; print(secrets.token_hex(32))")
+
+# Launch
+docker-compose up -d
+```
+
+---
+
+## 📁 Project Structure
+
+```
+mitotic-count-density-standardizer/
+├── agents/                  # Enterprise agent system
+│   ├── api.py              # FastAPI REST server
+│   ├── base.py             # Security, PHI guard, audit trail
+│   ├── models.py           # Pydantic schemas
+│   ├── supervisor.py       # Multi-agent orchestrator
+│   ├── workers.py          # Specialized worker agents
+│   └── ...
+├── tests/                  # Test suite
+│   ├── test_security.py    # Security & path validation tests
+│   └── test_core.py        # Core functionality tests
+├── mitotic_density.py      # Core domain algorithm
+├── cli.py                  # Enterprise CLI entry point
+├── enrichment.py           # Enrichment feature engines
+├── simulator.py            # High-throughput stress tester
+├── pyproject.toml          # Python package configuration
+├── Dockerfile              # Container build
+└── docker-compose.yml      # Container orchestration
 ```
