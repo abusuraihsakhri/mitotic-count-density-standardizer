@@ -1,4 +1,4 @@
-Patient_ID,v1,v2,v3
-PT-101,14.5,4.2,1.8
-PT-102,8.0,2.1,0.5
-PT-103,28.4,12.0,5.5
+specimen_id,mitotic_count,field_diameter_mm,fields_counted
+S-101,14,0.55,10
+S-102,8,0.55,10
+S-103,28,0.50,10
