@@ -10,7 +10,6 @@ import json
 import math
 import os
 from pathlib import PureWindowsPath
-import re
 import tempfile
 
 
@@ -82,7 +81,7 @@ def calculate_metrics(mitotic_count, field_diameter_mm=None, fields_counted=10,
         "score": density,  # Backward-compatible alias; units are mitoses/mm².
         "classification": "Not assigned (tissue-specific)",
         "clinical_recommendation": "None; measurement conversion only.",
-        "inputs_evaluated": 3 if diameter is not None else 3,
+        "inputs_evaluated": 3,
     }
 
 
@@ -143,7 +142,7 @@ def process_batch(input_csv, output_csv):
                                              delete=False) as out:
                 temp_name = out.name
                 writer = csv.DictWriter(out, fieldnames=headers + computed)
-                writer.writeheader()
+                writer.writerow({name: _safe_csv_cell(name) for name in headers + computed})
                 processed = 0
                 for row_number, row in enumerate(reader, 2):
                     if None in row:
