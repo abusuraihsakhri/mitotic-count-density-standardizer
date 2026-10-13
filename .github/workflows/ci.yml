@@ -2,10 +2,14 @@ name: Test and verify
 
 on:
   push:
-    branches: [master, main, "audit/**"]
+    branches: [master, main]
   pull_request:
     branches: [master, main]
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
