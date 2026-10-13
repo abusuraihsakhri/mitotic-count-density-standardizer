@@ -4,38 +4,37 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mitotic-count-density-standardizer"
-version = "3.0.0"
-description = "Standardizes raw mitotic counts per 10 High Power Fields (HPF) to mm2 per microscope field diameter."
+version = "3.1.0"
+description = "Calibrated geometric normalization of mitotic counts to mitoses per square millimetre."
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
-authors = [
-    {name = "Dr. Abu Suraih Sakhri"}
-]
+authors = [{name = "Dr. Abu Suraih Sakhri"}]
 classifiers = [
     "Development Status :: 4 - Beta",
-    "Intended Audience :: Healthcare Industry",
+    "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
-    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "Topic :: Scientific/Engineering :: Medical Science Apps",
 ]
 dependencies = [
-    "fastapi>=0.111",
-    "uvicorn>=0.27",
-    "pydantic>=2.0",
+    "fastapi>=0.111,<1",
+    "uvicorn>=0.27,<1",
+    "pydantic>=2.0,<3",
 ]
 
 [project.optional-dependencies]
-test = [
-    "pytest>=7.0",
-    "pytest-cov>=4.0",
-]
+test = ["pytest>=7.0", "pytest-cov>=4.0"]
 
 [project.scripts]
-mitotic-density = "cli:main"
+mitotic-density = "mitotic_density:main"
+mitotic-agent = "cli:main"
+
+[tool.setuptools]
+py-modules = ["mitotic_density", "cli", "enrichment", "simulator"]
 
 [tool.setuptools.packages.find]
 include = ["agents*"]
