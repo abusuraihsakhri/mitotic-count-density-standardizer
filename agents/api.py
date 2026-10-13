@@ -1,55 +1,85 @@
-"""
-FastAPI REST API Server for Mitotic Count Density Standardizer.
-"""
-from typing import Dict, Any, List
+"""FastAPI service for calibrated density conversion and legacy demonstration APIs."""
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from .base import AuditLogger, PHIGuard
-from .models import SystemTaskPayload, ConsensusDossier
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel, Field
+
+from mitotic_density import calculate_metrics
+from .base import AuditLogger, SecurityException
+from .models import SystemTaskPayload
 from .supervisor import SystemSupervisor
 
 supervisor = SystemSupervisor(model_provider="mock")
-
 app = FastAPI(
     title="Mitotic Count Density Standardizer API",
-    description="Enterprise Distributed Component Platform (Clinical & Biomedical AI)",
-    version="3.0.0-ENTERPRISE",
+    description="Area-normalized mitotic measurements; separate demo-only agent endpoints.",
+    version="3.1.0",
 )
+
+
+@app.exception_handler(SecurityException)
+async def sensitive_identifier_handler(request, exc):
+    return JSONResponse(status_code=422, content={"detail": "Potential sensitive identifier detected"})
+
+
+class DensityRequest(BaseModel):
+    mitotic_count: int = Field(ge=0)
+    field_diameter_mm: float | None = None
+    measured_area_mm2: float | None = None
+    fields_counted: int = Field(default=10, ge=1)
 
 
 class ChatRequest(BaseModel):
     query: str
 
 
+@app.get("/", include_in_schema=False)
+def index():
+    path = Path(__file__).resolve().parent.parent / "web" / "index.html"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Browser interface not installed")
+    return FileResponse(path)
+
+
 @app.get("/health")
 def health():
-    return {"status": "HEALTHY", "service": "mitotic-count-density-standardizer", "domain": "Clinical & Biomedical AI", "standard": "CAP / CLSI / ISO Standards", "version": "3.0.0-ENTERPRISE"}
+    return {"status": "running", "service": "mitotic-count-density-standardizer",
+            "version": "3.1.0", "agent_workflow": "demonstration_only"}
 
 
 @app.get("/metrics")
 def metrics():
-    return {
-        "dossiers_processed_total": len(supervisor.dossier_registry),
-        "audit_blocks_total": len(AuditLogger.get_trail()),
-        "system_status": "NOMINAL_OPTIMAL"
-    }
+    return {"dossiers_processed_total": len(supervisor.dossier_registry),
+            "audit_blocks_total": len(AuditLogger.get_trail()),
+            "audit_integrity_verified": AuditLogger.verify_integrity()}
+
+
+@app.post("/api/density")
+def api_density(payload: DensityRequest):
+    try:
+        return calculate_metrics(**payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.post("/api/audit")
 def api_audit(payload: SystemTaskPayload):
     dossier = supervisor.process_task(payload)
-    return dossier.to_dict()
+    return {"experimental_demo": True, **dossier.to_dict()}
 
 
 @app.post("/api/chat")
 def api_chat(req: ChatRequest):
     try:
-        ans = supervisor.query_supervisory_chat(req.query)
-        return {"response": ans}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        return {"response": supervisor.query_supervisory_chat(req.query),
+                "experimental_demo": True}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/audit/logs")
 def api_audit_logs():
-    return {"audit_trail": AuditLogger.get_trail(), "verified": AuditLogger.verify_integrity()}
+    return {"audit_trail": AuditLogger.get_trail(),
+            "verified": AuditLogger.verify_integrity(),
+            "persistence": "process_memory_only"}

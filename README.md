@@ -1,197 +1,93 @@
 # Mitotic Count Density Standardizer
 
-> **Domain:** Clinical Decision Support & Biomedical Computing
-> **Reference Guidelines & Standards:** CAP / CLSI / ISO Standards
+A calibrated, area-based **mitotic-count conversion** utility for pathology research and reporting. Converts observed mitotic figures into **mitoses/mm²** using either a measured circular high-power field (HPF) diameter or a directly assessed tissue area.
 
-<div align="center">
+**Use the browser application:** Open [index.html](index.html) locally, or serve the repository using a static HTTP server. The repository advertises a GitHub Pages homepage, but live deployment has not yet been independently verified.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-3776AB.svg?logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688.svg?logo=fastapi&logoColor=white)
-![Audit Trail](https://img.shields.io/badge/Audit-HMAC--SHA256_Tamper--Evident-brightgreen.svg)
-![Zero-PHI Guard](https://img.shields.io/badge/Guard-Zero--PHI_Outbound-blue.svg)
-![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg?logo=docker&logoColor=white)
+## Calculation
 
-</div>
-
----
-
-## 📖 What It Does
-
-The Mitotic Count Density Standardizer standardizes raw mitotic counts per 10 High Power Fields (HPF) to mm² per microscope field diameter. It provides both single-case evaluation and batch CSV processing.
-
-- **Author:** Dr. Abu Suraih Sakhri
-- **License:** MIT
-
----
-
-## ⚙️ Key Capabilities & Algorithmic Modules
-
-### 🔬 Analytical Functions
-
-- **`calculate_metrics()`**: Core domain algorithm that computes weighted scores and classifies results into clinical tiers (Low/Standard, Moderate/Intermediate, High/Severe).
-- **`process_single()`** — Evaluates a single case via CLI arguments.
-- **`process_batch()`** — Processes CSV input files with path-traversal protection.
-- **`main()`** — CLI entry point with subcommands.
-
----
-
-## 📐 Mathematical Formulation
+For non-overlapping fully assessed circular fields, each with calibrated diameter `d` millimetres:
 
 ```text
-score = primary_val + sum(v_i * (1/i) for i, v_i in enumerate(secondary_vals, start=2))
-rounded_score = round(score, 2)
+area_per_HPF_mm2 = π × (d / 2)²
+total_area_mm2   = area_per_HPF_mm2 × number_of_HPF_counted
+mitoses_per_mm2  = observed_mitotic_count / total_area_mm2
 ```
 
-**Classification Tiers:**
-- **< 10.0** → Low / Standard (Standard monitoring)
-- **10.0 – 25.0** → Moderate / Intermediate (Close observation)
-- **≥ 25.0** → High / Severe (Urgent clinical intervention)
+For digital pathology or irregular examined regions, provide the measured **total tissue area in mm²** directly instead of computing it from field diameter. Exactly one area source must be provided.
 
----
+The tool reports an unrounded floating-point density; users should apply the reporting and rounding conventions specified by their relevant tumour protocol. **There are no generic clinical risk tiers or treatment recommendations.** For example, the ICCR breast reporting dataset requires calibration and uses tumour-specific mitotic grading rules; a density conversion alone does not assign a histological grade.
 
-## 💻 Installation
+## Browser interface
+
+- Single-case conversion with input validation and a transparent area breakdown.
+- CSV batch conversion, preserving specimen metadata and exporting computed columns.
+- Runs entirely in browser JavaScript. No Pyodide download or server-side Python process is required.
+- Uploaded CSV data stays in the browser session; no upload endpoint is used. No browser local-storage persistence.
+- CSV inputs are limited to 2 MB / 10,000 records to reduce browser resource exhaustion.
+
+Open the repository's `index.html` in a modern Chromium-, Firefox-, or Safari-based browser. The source is also mirrored under `docs/` and `web/` for common static hosting configurations. JavaScript syntax is checked in the test suite when Node.js is available.
+
+## Python installation and CLI
+
+Requires Python 3.10 or later.
 
 ```bash
-# Clone the repository
-git clone https://github.com/abusuraihsakhri/mitotic-count-density-standardizer.git
-cd mitotic-count-density-standardizer
-
-# Create virtual environment (recommended)
-python -m venv venv
-source venv/bin/activate  # or venv\Scripts\activate on Windows
-
-# Install dependencies
-pip install -e ".[test]"
+python -m pip install -e ".[test]"
+mitotic-density single --mitotic-count 12 --field-diameter-mm 0.55 --fields-counted 10
+mitotic-density single --mitotic-count 6 --measured-area-mm2 2.0
+mitotic-density batch -i sample.csv -o results.csv
+pytest -q
 ```
 
----
+The standard CSV schema uses `mitotic_count`, and either `field_diameter_mm` or `measured_area_mm2`; `fields_counted` is optional (default: 10). Extra columns, such as a non-identifying `specimen_id`, are preserved. Rows with missing or invalid measurements cause explicit errors; no partial output is published.
 
-## 💻 CLI Quickstart & Usage
+For direct Python calls:
 
-### 1. Single Case Evaluation
-```bash
-python mitotic_density.py single --v1 14.5 --v2 4.2 --v3 1.8
+```python
+from mitotic_density import calculate_metrics
+
+result = calculate_metrics(mitotic_count=12, field_diameter_mm=0.55, fields_counted=10)
+print(result["mitoses_per_mm2"])
 ```
 
-### 2. Batch CSV Processing
-```bash
-python mitotic_density.py batch -i sample.csv -o results.csv
-```
+The historical `score` output alias now equals **mitoses/mm²**, not the earlier arbitrary weighted score. Prior `v1/v2/v3` input formats are intentionally discontinued because they did not express mitotic density.
 
-### 3. Enterprise CLI (Agents System)
-```bash
-# Run audit evaluation
-python cli.py audit --primary 28.5 --secondary 14.2
-
-# Batch process records
-python cli.py batch -i sample.csv -o results.csv
-
-# Verify HMAC audit trail
-python cli.py verify-audit
-
-# Launch FastAPI REST server
-python cli.py serve --host 127.0.0.1 --port 8000
-```
-
-### Parameter Reference
-- `--v1`: Primary measurement (default: 10.0)
-- `--v2`: Secondary measurement (default: 5.0)
-- `--v3`: Tertiary measurement (default: 2.0)
-- `-i / --input`: Input CSV file path
-- `-o / --output`: Output CSV file path (default: results.csv)
-
-### Input Data Schema
-
-| Field | Description | Requirement |
-|:------|:------------|:------------|
-| `Patient_ID` | Patient identifier | Required |
-| `v1` | Primary measurement | Required |
-| `v2` | Secondary measurement | Required |
-| `v3` | Tertiary measurement | Required |
-
----
-
-## 🛡️ Security & Enterprise Architecture
-
-* **Zero-PHI Outbound Interceptor:** Active regex inspection blocking SSNs, MRNs, phone numbers, emails, and patient identifiers from audit logs and outbound data.
-* **Tamper-Evident HMAC-SHA256 Audit Trail:** Chained, cryptographically signed logs for every evaluation and state transition with integrity verification.
-* **Path Traversal Protection:** File path validation preventing access to system directories.
-* **Secure Key Management:** Audit signing key loaded from `AUDIT_SECRET_KEY` environment variable with secure random fallback.
-
-### Environment Variables
-
-| Variable | Description | Default |
-|:---------|:------------|:--------|
-| `AUDIT_SECRET_KEY` | HMAC-SHA256 audit signing key | Random (ephemeral) |
-| `MODEL_PROVIDER` | LLM provider for chat (mock/ollama/claude/openai) | mock |
-
----
-
-## 🧪 Testing & Verification
-
-Run the full test suite:
+## REST API (optional)
 
 ```bash
-pytest -v
+mitotic-agent serve --host 127.0.0.1 --port 8000
 ```
 
-Run with coverage:
+- `GET /` serves the browser UI from a source checkout.
+- `POST /api/density` accepts `{"mitotic_count":12,"field_diameter_mm":0.55,"fields_counted":10}` and returns area and density.
+- `GET /health` and `GET /metrics` report process-local service information.
+- The old `/api/audit` and `/api/chat` interfaces remain **demonstration-only**. Their thresholds, mock agent responses and classifications are **not validated clinical decision support**.
+
+The supplementary `enrichment.py` modules are historical placeholders; they do not implement real FHIR integration, patient stratification or cross-institutional analytics. They must not be used to make patient decisions.
+
+## Privacy and security
+
+The browser calculator processes numeric inputs and CSV content locally. Do not submit patient-identifying data to the optional FastAPI service. Its identifier-pattern screening is **not comprehensive de-identification** and does not establish HIPAA compliance. The in-memory audit chain uses HMAC-SHA256 and verifies entry signatures and chain continuity, but is **not persistent across restarts**. For stable signing across restarts, configure `AUDIT_SECRET_KEY` before starting the API.
+
+CSV exports escape formula-like content in user-supplied cells. Server deployments require their own authentication, access controls, TLS, persistence and privacy review before use with sensitive information.
+
+## Development and containers
 
 ```bash
-pytest -v --cov=mitotic_density --cov=agents
+python -m pip install -e ".[test]"
+python -m pytest -q
+python -m compileall -q mitotic_density.py cli.py agents
+python -m build  # if the build package is installed
 ```
 
-Execute high-throughput batch simulation benchmarks:
+The included `Dockerfile` and `docker-compose.yml` run the optional FastAPI server. GitHub Actions runs unit tests on Python 3.10–3.12. No server runtime is required for the static browser interface.
 
-```bash
-python simulator.py --tasks 1000 --concurrency 8
-```
+## Scientific background
 
----
+- [ICCR: Histological tumour grade (invasive breast cancer)](https://www.iccr-cancer.org/datasets/docs/iccr-invasive-histotg/) — calibrated HPF area and specimen-specific scoring.
+- [ICCR melanoma reporting guidance](https://pmc.ncbi.nlm.nih.gov/articles/PMC3864181/) — area-normalized mitotic counting and site-specific methodology.
 
-## 🐳 Container Deployment
+This utility performs a numerical conversion, not an interpretation of field selection, biopsy adequacy, reporting conventions, prognosis, or treatment.
 
-### Docker
-```bash
-# Set production audit key
-export AUDIT_SECRET_KEY=$(python -c "import secrets; print(secrets.token_hex(32))")
-
-# Build and run
-docker build -t mitotic-count-density-standardizer .
-docker run -p 8000:8000 -e AUDIT_SECRET_KEY mitotic-count-density-standardizer
-```
-
-### Docker Compose
-```bash
-# Generate a secure key
-export AUDIT_SECRET_KEY=$(python -c "import secrets; print(secrets.token_hex(32))")
-
-# Launch
-docker-compose up -d
-```
-
----
-
-## 📁 Project Structure
-
-```
-mitotic-count-density-standardizer/
-├── agents/                  # Enterprise agent system
-│   ├── api.py              # FastAPI REST server
-│   ├── base.py             # Security, PHI guard, audit trail
-│   ├── models.py           # Pydantic schemas
-│   ├── supervisor.py       # Multi-agent orchestrator
-│   ├── workers.py          # Specialized worker agents
-│   └── ...
-├── tests/                  # Test suite
-│   ├── test_security.py    # Security & path validation tests
-│   └── test_core.py        # Core functionality tests
-├── mitotic_density.py      # Core domain algorithm
-├── cli.py                  # Enterprise CLI entry point
-├── enrichment.py           # Enrichment feature engines
-├── simulator.py            # High-throughput stress tester
-├── pyproject.toml          # Python package configuration
-├── Dockerfile              # Container build
-└── docker-compose.yml      # Container orchestration
-```
+**License:** [MIT](LICENSE).

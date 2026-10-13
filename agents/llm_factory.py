@@ -1,31 +1,20 @@
-"""
-Inference Engine supporting local Ollama, Claude, OpenAI, and deterministic Mock with Zero-PHI checks.
-"""
-from typing import Dict, Any, Optional
+"""Deterministic placeholder for the optional legacy agent demonstration."""
 from .base import PHIGuard
 
 
 class MockLLM:
-    def __init__(self, system_name: str = "Mitotic Count Density Standardizer"):
+    def __init__(self, system_name="Mitotic Count Density Standardizer"):
         self.system_name = system_name
 
-    def invoke(self, prompt: str) -> str:
+    def invoke(self, prompt):
         PHIGuard.assert_no_phi(prompt)
-        return f"[{self.system_name} Deterministic Verification Engine]: Clinical & scientific analysis verified for query: '{prompt[:60]}...'. Parameters evaluated under CAP / CLSI / ISO Standards."
+        return ("Demonstration only: no language model, clinical validation, "
+                "or clinical assessment is performed. Use the calibrated "
+                "mitoses/mm² conversion for numerical measurement.")
 
 
 class LLMFactory:
-    """Creates configured LLM client instances with zero-PHI protection."""
-
     @staticmethod
-    def create(provider: str = "mock", system_name: str = "Mitotic Count Density Standardizer"):
-        prov = str(provider).lower()
-        if prov in ["mock", "deterministic", "test"]:
-            return MockLLM(system_name)
-        elif prov in ["ollama", "local"]:
-            return MockLLM(system_name)
-        elif prov in ["claude", "anthropic"]:
-            return MockLLM(system_name)
-        elif prov in ["openai", "gpt4"]:
-            return MockLLM(system_name)
+    def create(provider="mock", system_name="Mitotic Count Density Standardizer"):
+        # No remote provider has been integrated. Never imply that one is in use.
         return MockLLM(system_name)

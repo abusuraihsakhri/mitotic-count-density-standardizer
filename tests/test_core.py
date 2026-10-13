@@ -1,102 +1,126 @@
-"""
-Core functionality tests for Mitotic Count Density Standardizer.
-"""
-import os
-import sys
+"""Regression tests for geometric mitotic density normalization."""
+import csv
+import math
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from mitotic_density import calculate_metrics, process_batch
+from mitotic_density import calculate_metrics, process_batch, main
 
 
-class TestCalculateMetrics:
-    """Tests for the core calculate_metrics function."""
+class TestDensity:
+    def test_calibrated_ten_fields(self):
+        result = calculate_metrics(mitotic_count=12, field_diameter_mm=0.55, fields_counted=10)
+        field_area = math.pi * (0.55 / 2) ** 2
+        assert result["field_area_mm2"] == pytest.approx(field_area)
+        assert result["total_area_mm2"] == pytest.approx(field_area * 10)
+        assert result["mitoses_per_mm2"] == pytest.approx(12 / (field_area * 10))
+        assert result["score"] == result["mitoses_per_mm2"]
 
-    def test_basic_calculation(self):
-        res = calculate_metrics(v1=10.0, v2=5.0, v3=2.0)
-        assert res["tool"] == "mitotic-count-density-standardizer"
-        assert res["score"] > 0
-        assert "classification" in res
-        assert "clinical_recommendation" in res
+    def test_measured_area_digital_pathology(self):
+        result = calculate_metrics(mitotic_count=6, measured_area_mm2=2)
+        assert result["mitoses_per_mm2"] == 3
+        assert result["field_area_mm2"] is None
 
-    def test_single_value(self):
-        res = calculate_metrics(v1=15.0)
-        assert res["score"] == 15.0
-        assert res["inputs_evaluated"] == 1
+    def test_zero_mitoses(self):
+        assert calculate_metrics(0, field_diameter_mm=0.5)["mitoses_per_mm2"] == 0
 
-    def test_low_score_classification(self):
-        res = calculate_metrics(v1=5.0)
-        assert res["score"] < 10.0
-        assert "Low" in res["classification"]
-        assert "Standard monitoring" in res["clinical_recommendation"]
+    def test_field_count_changes_examined_area(self):
+        ten = calculate_metrics(10, field_diameter_mm=0.5, fields_counted=10)
+        five = calculate_metrics(10, field_diameter_mm=0.5, fields_counted=5)
+        assert five["mitoses_per_mm2"] == pytest.approx(ten["mitoses_per_mm2"] * 2)
 
-    def test_moderate_score_classification(self):
-        res = calculate_metrics(v1=15.0)
-        assert 10.0 <= res["score"] < 25.0
-        assert "Moderate" in res["classification"]
-        assert "Close observation" in res["clinical_recommendation"]
+    @pytest.mark.parametrize("count", [-1, 1.5, "wrong", float("nan"), True])
+    def test_invalid_counts(self, count):
+        with pytest.raises(ValueError, match="mitotic_count"):
+            calculate_metrics(count, field_diameter_mm=0.5)
 
-    def test_high_score_classification(self):
-        res = calculate_metrics(v1=30.0)
-        assert res["score"] >= 25.0
-        assert "High" in res["classification"]
-        assert "Urgent clinical intervention" in res["clinical_recommendation"]
+    @pytest.mark.parametrize("value", [0, -0.5, float("nan"), float("inf"), "abc", True])
+    def test_invalid_calibrations(self, value):
+        with pytest.raises(ValueError, match="field_diameter_mm"):
+            calculate_metrics(10, field_diameter_mm=value)
 
-    def test_string_values_filtered(self):
-        res = calculate_metrics(v1=10.0, name="test")
-        # String values should not affect numeric calculation
-        assert res["score"] == 10.0
+    @pytest.mark.parametrize("value", [0, -1, 1.5, float("inf"), True])
+    def test_invalid_field_counts(self, value):
+        with pytest.raises(ValueError, match="fields_counted"):
+            calculate_metrics(10, field_diameter_mm=0.5, fields_counted=value)
 
-    def test_none_values_ignored(self):
-        res = calculate_metrics(v1=10.0, v2=None, v3=None)
-        assert res["score"] == 10.0
-        assert res["inputs_evaluated"] == 1
+    def test_exactly_one_area_source(self):
+        with pytest.raises(ValueError, match="exactly one"):
+            calculate_metrics(5)
+        with pytest.raises(ValueError, match="exactly one"):
+            calculate_metrics(5, field_diameter_mm=0.5, measured_area_mm2=1)
 
-    def test_no_numeric_defaults_to_one(self):
-        res = calculate_metrics(name="test", label="abc")
-        assert res["score"] == 1.0
+    def test_area_must_be_positive_finite(self):
+        with pytest.raises(ValueError, match="measured_area_mm2"):
+            calculate_metrics(5, measured_area_mm2=0)
+        with pytest.raises(ValueError, match="measured_area_mm2"):
+            calculate_metrics(5, measured_area_mm2=float("inf"))
 
-    def test_weighted_calculation(self):
-        # v1 is primary, v2 gets weight 1/2, v3 gets weight 1/3
-        res = calculate_metrics(v1=10.0, v2=4.0, v3=3.0)
-        # expected: 10.0 + 4.0*(1/2) + 3.0*(1/3) = 10 + 2 + 1 = 13.0
-        assert res["score"] == 13.0
+    def test_no_clinical_triage_from_density(self):
+        result = calculate_metrics(500, field_diameter_mm=0.5)
+        assert "Not assigned" in result["classification"]
+        assert "None;" in result["clinical_recommendation"]
 
-    def test_rounding(self):
-        res = calculate_metrics(v1=10.0, v2=3.333)
-        # score = 10.0 + 3.333*0.5 = 11.6665 -> rounds to 11.67
-        assert res["score"] == 11.67
+    def test_cli_single(self, capsys):
+        assert main(["single", "--mitotic-count", "10", "--measured-area-mm2", "2"]) == 0
+        assert '"mitoses_per_mm2": 5.0' in capsys.readouterr().out
 
 
-class TestProcessBatch:
-    """Tests for batch CSV processing."""
+class TestCSV:
+    def test_batch_preserves_identifiers(self, tmp_path):
+        infile = tmp_path / "observations.csv"
+        outfile = tmp_path / "result.csv"
+        infile.write_text("specimen_id,mitotic_count,field_diameter_mm,fields_counted\n"
+                          "S1,10,0.5,10\nS2,0,0.55,5\n", encoding="utf-8")
+        assert process_batch(str(infile), str(outfile)) == 2
+        with outfile.open(newline="", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+        assert [r["specimen_id"] for r in rows] == ["S1", "S2"]
+        assert float(rows[0]["mitoses_per_mm2"]) == pytest.approx(10 / (10 * math.pi * .25 ** 2))
+        assert float(rows[1]["mitoses_per_mm2"]) == 0
 
-    def test_batch_creates_output(self, tmp_path):
-        csv_in = tmp_path / "input.csv"
-        csv_out = tmp_path / "output.csv"
-        csv_in.write_text("Patient_ID,v1,v2,v3\nPT-001,14.5,4.2,1.8\n", encoding="utf-8")
+    def test_csv_direct_area(self, tmp_path):
+        src = tmp_path / "src.csv"
+        dst = tmp_path / "dst.csv"
+        src.write_text("mitotic_count,measured_area_mm2\n4,2\n")
+        process_batch(str(src), str(dst))
+        assert "2.0" in dst.read_text()
 
-        process_batch(str(csv_in), str(csv_out))
-        assert csv_out.exists()
+    def test_empty_with_header(self, tmp_path):
+        src = tmp_path / "src.csv"
+        dst = tmp_path / "dst.csv"
+        src.write_text("mitotic_count,field_diameter_mm\n")
+        assert process_batch(str(src), str(dst)) == 0
+        assert "mitoses_per_mm2" in dst.read_text()
 
-    def test_batch_output_has_score_columns(self, tmp_path):
-        csv_in = tmp_path / "input.csv"
-        csv_out = tmp_path / "output.csv"
-        csv_in.write_text("v1,v2\n10.0,5.0\n", encoding="utf-8")
+    def test_invalid_row_leaves_no_partial_output(self, tmp_path):
+        src = tmp_path / "src.csv"
+        dst = tmp_path / "dst.csv"
+        src.write_text("mitotic_count,field_diameter_mm\n10,0.5\nabc,0.5\n")
+        with pytest.raises(ValueError, match="Row 3"):
+            process_batch(str(src), str(dst))
+        assert not dst.exists()
 
-        process_batch(str(csv_in), str(csv_out))
-        content = csv_out.read_text(encoding="utf-8")
-        assert "score" in content
-        assert "classification" in content
-        assert "clinical_recommendation" in content
+    def test_reject_inplace_write(self, tmp_path):
+        src = tmp_path / "src.csv"
+        src.write_text("mitotic_count,field_diameter_mm\n4,0.5\n")
+        with pytest.raises(ValueError, match="must differ"):
+            process_batch(str(src), str(src))
 
-    def test_batch_empty_csv(self, tmp_path):
-        csv_in = tmp_path / "input.csv"
-        csv_out = tmp_path / "output.csv"
-        csv_in.write_text("v1,v2\n", encoding="utf-8")
+    def test_reject_missing_required_headers(self, tmp_path):
+        src = tmp_path / "src.csv"
+        with pytest.raises(ValueError, match="mitotic_count"):
+            src.write_text("name,field_diameter_mm\nS1,0.5\n")
+            process_batch(str(src), str(tmp_path / "out.csv"))
 
-        process_batch(str(csv_in), str(csv_out))
-        assert csv_out.exists()
-        content = csv_out.read_text(encoding="utf-8")
-        assert "score" in content  # header should exist
+    def test_csv_formula_injection_escaped(self, tmp_path):
+        src = tmp_path / "src.csv"
+        dst = tmp_path / "dst.csv"
+        src.write_text("specimen_id,mitotic_count,measured_area_mm2\n=HYPERLINK(1),5,2\n")
+        process_batch(str(src), str(dst))
+        assert "'=HYPERLINK(1)" in dst.read_text()
+
+    def test_reject_extra_cells(self, tmp_path):
+        src = tmp_path / "src.csv"
+        src.write_text("mitotic_count,measured_area_mm2\n5,2,extra\n")
+        with pytest.raises(ValueError, match="more fields"):
+            process_batch(str(src), str(tmp_path / "out.csv"))
