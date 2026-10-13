@@ -2,11 +2,11 @@
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from mitotic_density import calculate_metrics
-from .base import AuditLogger
+from .base import AuditLogger, SecurityException
 from .models import SystemTaskPayload
 from .supervisor import SystemSupervisor
 
@@ -16,6 +16,11 @@ app = FastAPI(
     description="Area-normalized mitotic measurements; separate demo-only agent endpoints.",
     version="3.1.0",
 )
+
+
+@app.exception_handler(SecurityException)
+async def sensitive_identifier_handler(request, exc):
+    return JSONResponse(status_code=422, content={"detail": "Potential sensitive identifier detected"})
 
 
 class DensityRequest(BaseModel):
