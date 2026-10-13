@@ -1,40 +1,39 @@
-name: Mitotic Count Density Standardizer CI/CD & Security Verification
+name: Test and verify
 
 on:
   push:
-    branches: [ master, main ]
+    branches: [master, main, "audit/**"]
   pull_request:
-    branches: [ master, main ]
+    branches: [master, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  test-and-audit:
+  tests:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
 
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
+      - name: Install package and tests
+        run: python -m pip install -e ".[test]"
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install fastapi uvicorn pydantic pytest
+      - name: Compile and run tests
+        run: |
+          python -m compileall -q mitotic_density.py cli.py agents tests
+          python -m pytest -q
 
-    - name: Run Pytest Suite
-      run: |
-        pytest -v
-
-    - name: Security SAST & Zero-PHI Audit
-      run: |
-        python -c "
-        from agents.base import PHIGuard, AuditLogger
-        import pytest
-        assert AuditLogger.verify_integrity() is True
-        print('Security & Zero-PHI Audit Passed!')
-        "
+      - name: Validate package entry points
+        run: |
+          mitotic-density single --mitotic-count 10 --measured-area-mm2 2
+          mitotic-agent verify-audit
