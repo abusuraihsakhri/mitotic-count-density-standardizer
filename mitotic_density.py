@@ -1,149 +1,199 @@
 #!/usr/bin/env python3
-"""
-Mitotic Count Density Standardizer
-Standardizes raw mitotic counts per 10 High Power Fields (HPF) to mm2 per microscope field diameter.
+"""Calibrated mitotic density calculation for microscopy and digital pathology.
 
-Zero-dependency Python implementation with single and batch evaluation.
-Author: Dr. Abu Suraih Sakhri
-License: MIT
+This module performs geometric area normalization only. It does not assign
+histological grades, diagnoses, prognoses, or treatment recommendations.
 """
-
 import argparse
 import csv
 import json
+import math
 import os
+from pathlib import PureWindowsPath
 import re
-import sys
-from typing import Dict, Any, List, Optional
+import tempfile
 
 
-def calculate_metrics(**kwargs) -> Dict[str, Any]:
+def _nonnegative_integer(value, name):
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a non-negative integer")
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"{name} must be a non-negative integer") from exc
+    if not math.isfinite(number) or not number.is_integer() or number < 0:
+        raise ValueError(f"{name} must be a non-negative integer")
+    return int(number)
+
+
+def _positive_finite(value, name):
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a finite positive number")
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"{name} must be a finite positive number") from exc
+    if not math.isfinite(number) or number <= 0:
+        raise ValueError(f"{name} must be a finite positive number")
+    return number
+
+
+def calculate_metrics(mitotic_count, field_diameter_mm=None, fields_counted=10,
+                      measured_area_mm2=None):
+    """Express observed mitoses per square millimetre of *assessed tissue*.
+
+    Specify exactly one area calibration:
+      * field_diameter_mm: diameter of a calibrated circular high-power field;
+        counted fields must not overlap and should be fully assessable.
+      * measured_area_mm2: directly measured total assessed tissue area (WSI).
+
+    Values are not rounded internally. Reporting/rounding rules vary by tumour.
     """
-    Core domain algorithm for mitotic-count-density-standardizer.
-    """
-    params = {}
-    for k, v in kwargs.items():
-        if v is not None:
-            try:
-                params[k] = float(v)
-            except (ValueError, TypeError):
-                params[k] = str(v)
+    count = _nonnegative_integer(mitotic_count, "mitotic_count")
+    fields = _nonnegative_integer(fields_counted, "fields_counted")
+    if fields == 0:
+        raise ValueError("fields_counted must be greater than zero")
+    if (field_diameter_mm is None) == (measured_area_mm2 is None):
+        raise ValueError("Provide exactly one of field_diameter_mm or measured_area_mm2")
 
-    # Deterministic domain logic
-    numeric_vals = [val for val in params.values() if isinstance(val, (int, float))]
-    primary_val = numeric_vals[0] if numeric_vals else 1.0
-
-    score = primary_val
-    for idx, nv in enumerate(numeric_vals[1:], start=2):
-        score += nv * (1.0 / idx)
-
-    rounded_score = round(score, 2)
-    
-    # Classification / tiering
-    if rounded_score < 10.0:
-        tier = "Low / Standard"
-        action = "Standard monitoring or negative cutoff"
-    elif rounded_score < 25.0:
-        tier = "Moderate / Intermediate"
-        action = "Close observation or secondary evaluation"
+    diameter = None
+    field_area = None
+    if field_diameter_mm is not None:
+        diameter = _positive_finite(field_diameter_mm, "field_diameter_mm")
+        field_area = math.pi * (diameter / 2.0) ** 2
+        total_area = field_area * fields
     else:
-        tier = "High / Severe"
-        action = "Urgent clinical intervention or primary positive finding"
+        total_area = _positive_finite(measured_area_mm2, "measured_area_mm2")
+
+    if not math.isfinite(total_area) or total_area <= 0:
+        raise ValueError("Calculated area is outside the supported numeric range")
+    density = count / total_area
+    if not math.isfinite(density):
+        raise ValueError("Calculated density is outside the supported numeric range")
 
     return {
         "tool": "mitotic-count-density-standardizer",
-        "score": rounded_score,
-        "classification": tier,
-        "clinical_recommendation": action,
-        "inputs_evaluated": len(params),
+        "mitotic_count": count,
+        "fields_counted": fields,
+        "field_diameter_mm": diameter,
+        "field_area_mm2": field_area,
+        "total_area_mm2": total_area,
+        "mitoses_per_mm2": density,
+        "score": density,  # Backward-compatible alias; units are mitoses/mm².
+        "classification": "Not assigned (tissue-specific)",
+        "clinical_recommendation": "None; measurement conversion only.",
+        "inputs_evaluated": 3 if diameter is not None else 3,
     }
 
 
-def process_single(args) -> None:
-    kwargs = vars(args)
-    kwargs.pop("func", None)
-    res = calculate_metrics(**kwargs)
-    print(json.dumps(res, indent=2))
-
-
-def _validate_safe_path(path: str, must_exist: bool = False) -> str:
-    """Validate a file path for safe access, preventing path traversal."""
-    if not path or "\x00" in path:
+def _validate_safe_path(path, must_exist=False):
+    """Reject null bytes and protected OS paths; allow normal local CSV paths."""
+    if not path or "\x00" in str(path):
         raise ValueError("Invalid file path: empty or contains null bytes")
-
-    normalized = os.path.normpath(os.path.abspath(path))
-
-    # Reject paths that attempt traversal to sensitive system directories
-    dangerous_prefixes = [
-        "/etc", "/sys", "/proc", "/dev",
-        "C:\\Windows", "C:\\Program Files", "C:\\ProgramData",
-    ]
-    for prefix in dangerous_prefixes:
-        if normalized.lower().startswith(prefix.lower()):
-            raise ValueError(f"Access denied: path '{path}' resolves to a restricted system location")
-
+    path = os.fspath(path)
+    win = PureWindowsPath(path)
+    if win.drive and win.root:
+        parts = [part.casefold() for part in win.parts]
+        if parts[0].casefold().startswith("c:") and len(parts) > 1 and parts[1] in (
+            "windows", "program files", "programdata"
+        ):
+            raise ValueError(f"Access denied: restricted system location: {path}")
+    normalized = os.path.realpath(os.path.abspath(path))
+    if os.name != "nt":
+        for system_dir in ("/etc", "/proc", "/sys", "/dev"):
+            if normalized == system_dir or normalized.startswith(system_dir + os.sep):
+                raise ValueError(f"Access denied: restricted system location: {path}")
     if must_exist and not os.path.isfile(normalized):
         raise FileNotFoundError(f"Input file not found: {path}")
-
     return normalized
 
 
-def process_batch(input_csv: str, output_csv: str) -> None:
-    safe_input = _validate_safe_path(input_csv, must_exist=True)
-    safe_output = _validate_safe_path(output_csv, must_exist=False)
+def _safe_csv_cell(value):
+    """Avoid spreadsheet formula execution when exported CSV is opened in Excel."""
+    text = "" if value is None else str(value)
+    if text.lstrip().startswith(("=", "+", "-", "@")) or text.startswith(("\t", "\r", "\n")):
+        return "'" + text
+    return text
 
-    with open(safe_input, mode="r", encoding="utf-8-sig") as f:
-        reader = csv.DictReader(f)
-        fieldnames = list(reader.fieldnames or [])
-        rows = list(reader)
 
-    out_fields = fieldnames + ["score", "classification", "clinical_recommendation"]
-    out_rows = []
+def process_batch(input_csv, output_csv):
+    source = _validate_safe_path(input_csv, must_exist=True)
+    destination = _validate_safe_path(output_csv)
+    if os.path.normcase(source) == os.path.normcase(destination):
+        raise ValueError("Input and output files must differ")
+    computed = ["mitoses_per_mm2", "total_area_mm2", "field_area_mm2"]
+    output_dir = os.path.dirname(destination)
+    os.makedirs(output_dir, exist_ok=True)
+    temp_name = None
+    try:
+        with open(source, encoding="utf-8-sig", newline="") as inp:
+            reader = csv.DictReader(inp)
+            headers = reader.fieldnames
+            if not headers or len(set(headers)) != len(headers) or any(not h for h in headers):
+                raise ValueError("CSV needs a header row with unique, nonempty columns")
+            if "mitotic_count" not in headers:
+                raise ValueError("CSV requires a mitotic_count column")
+            if not ("field_diameter_mm" in headers or "measured_area_mm2" in headers):
+                raise ValueError("CSV requires field_diameter_mm or measured_area_mm2")
+            if any(c in headers for c in computed):
+                raise ValueError("Input already has reserved computed output columns")
 
-    for r in rows:
-        calc_res = calculate_metrics(**r)
-        row_dict = dict(r)
-        row_dict["score"] = calc_res["score"]
-        row_dict["classification"] = calc_res["classification"]
-        row_dict["clinical_recommendation"] = calc_res["clinical_recommendation"]
-        out_rows.append(row_dict)
-
-    # Ensure output directory exists
-    out_dir = os.path.dirname(safe_output)
-    if out_dir and not os.path.isdir(out_dir):
-        os.makedirs(out_dir, exist_ok=True)
-
-    with open(safe_output, mode="w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=out_fields)
-        writer.writeheader()
-        writer.writerows(out_rows)
-
-    print(f"Processed {len(out_rows)} records -> {safe_output}")
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", newline="",
+                                             dir=output_dir, prefix=".mitotic-", suffix=".csv",
+                                             delete=False) as out:
+                temp_name = out.name
+                writer = csv.DictWriter(out, fieldnames=headers + computed)
+                writer.writeheader()
+                processed = 0
+                for row_number, row in enumerate(reader, 2):
+                    if None in row:
+                        raise ValueError(f"Row {row_number}: more fields than CSV headers")
+                    try:
+                        result = calculate_metrics(
+                            mitotic_count=row.get("mitotic_count"),
+                            field_diameter_mm=row.get("field_diameter_mm") or None,
+                            fields_counted=row.get("fields_counted") or 10,
+                            measured_area_mm2=row.get("measured_area_mm2") or None,
+                        )
+                    except ValueError as exc:
+                        raise ValueError(f"Row {row_number}: {exc}") from exc
+                    safe_row = {k: _safe_csv_cell(v) for k, v in row.items()}
+                    safe_row.update({k: result[k] for k in computed})
+                    writer.writerow(safe_row)
+                    processed += 1
+        os.replace(temp_name, destination)
+        temp_name = None
+    finally:
+        if temp_name is not None and os.path.exists(temp_name):
+            os.unlink(temp_name)
+    print(f"Processed {processed} records -> {destination}")
+    return processed
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Mitotic Count Density Standardizer")
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    # Single parser
-    single_parser = subparsers.add_parser("single", help="Evaluate single case")
-    single_parser.add_argument("--v1", type=float, default=10.0, help="Primary parameter")
-    single_parser.add_argument("--v2", type=float, default=5.0, help="Secondary parameter")
-    single_parser.add_argument("--v3", type=float, default=2.0, help="Tertiary parameter")
-    single_parser.set_defaults(func=process_single)
-
-    # Batch parser
-    batch_parser = subparsers.add_parser("batch", help="Process batch CSV")
-    batch_parser.add_argument("-i", "--input", required=True, help="Input CSV")
-    batch_parser.add_argument("-o", "--output", default="results.csv", help="Output CSV")
-
+    parser = argparse.ArgumentParser(description="Normalize observed mitoses to mitoses/mm²")
+    sub = parser.add_subparsers(dest="command", required=True)
+    single = sub.add_parser("single", help="Calculate one observation")
+    single.add_argument("--mitotic-count", required=True, type=int)
+    group = single.add_mutually_exclusive_group(required=True)
+    group.add_argument("--field-diameter-mm", type=float)
+    group.add_argument("--measured-area-mm2", type=float)
+    single.add_argument("--fields-counted", type=int, default=10)
+    batch = sub.add_parser("batch", help="Convert a CSV batch")
+    batch.add_argument("-i", "--input", required=True)
+    batch.add_argument("-o", "--output", default="results.csv")
     args = parser.parse_args(argv)
-
-    if args.command == "single":
-        args.func(args)
-    elif args.command == "batch":
-        process_batch(args.input, args.output)
+    try:
+        if args.command == "single":
+            result = calculate_metrics(args.mitotic_count, args.field_diameter_mm,
+                                       args.fields_counted, args.measured_area_mm2)
+            print(json.dumps(result, indent=2, allow_nan=False))
+        else:
+            process_batch(args.input, args.output)
+    except (ValueError, OSError) as exc:
+        parser.error(str(exc))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
