@@ -1,21 +1,19 @@
+import csv
 import pytest
 from mitotic_density import calculate_metrics, process_batch
 
 
-def test_mitotic_density_single():
-    res = calculate_metrics(v1=12.0, v2=4.0)
-    assert "score" in res
-    assert "classification" in res
-    assert res["score"] > 0
+def test_single_mitotic_density():
+    result = calculate_metrics(mitotic_count=12, field_diameter_mm=0.5)
+    assert result["mitoses_per_mm2"] == pytest.approx(12 / (10 * 3.141592653589793 * .25**2))
+    assert result["classification"].startswith("Not assigned")
 
 
-def test_mitotic_density_batch(tmp_path):
-    csv_in = tmp_path / "in.csv"
-    csv_out = tmp_path / "out.csv"
-    csv_in.write_text("Patient,v1,v2\nPat_001,15.0,3.0\nPat_002,5.0,1.0\n", encoding="utf-8")
-    
-    process_batch(str(csv_in), str(csv_out))
-    assert csv_out.exists()
-    content = csv_out.read_text(encoding="utf-8")
-    assert "Pat_001" in content
-    assert "score" in content
+def test_batch_mitotic_density(tmp_path):
+    source = tmp_path / "input.csv"
+    target = tmp_path / "output.csv"
+    source.write_text("specimen_id,mitotic_count,field_diameter_mm,fields_counted\nA,15,0.5,10\nB,5,0.5,10\n")
+    assert process_batch(str(source), str(target)) == 2
+    with target.open(newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    assert float(rows[0]["mitoses_per_mm2"]) == pytest.approx(float(rows[1]["mitoses_per_mm2"]) * 3)
